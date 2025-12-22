@@ -1,0 +1,56 @@
+# ============================================================
+# Advo Cache - Production Deployment
+# ============================================================
+# Leader: NUC 9 Pro (100.117.95.87:8081)
+# Replica: Digital Ocean (100.86.64.73:8081)
+#
+# Deployment:
+#   1. Copy this file to NUC, run: docker-compose up advo-cache-leader -d
+#   2. Copy this file to DO, run: docker-compose up advo-cache-replica -d
+#
+# Logs:
+#   docker-compose logs -f advo-cache-leader
+#   docker-compose logs -f advo-cache-replica
+# ============================================================
+
+services:
+  # ============================================================
+  # Leader Instance - Deploy to NUC 9 Pro (100.117.95.87)
+  # ============================================================
+  advo-cache-leader:
+    image: nostro37/advo-cache:latest
+    container_name: advo-cache-leader
+    network_mode: "host"
+    environment:
+      - ADVO_PORT=:8081
+      - ADVO_ENVIRONMENT=production
+      - ADVO_ROLE=leader
+      - ADVO_CACHE_TTL_MINUTES=15
+      - ADVO_JITTER_PERCENT=20
+      - ADVO_LOCK_TTL_SECONDS=30
+      - ADVO_LOCK_CLEANUP_SECONDS=5
+      - ADVO_HEARTBEAT_INTERVAL_SECONDS=5
+      - ADVO_HEARTBEAT_TIMEOUT_SECONDS=10
+      - ADVO_LOG_LEVEL=info
+    restart: unless-stopped
+
+  # ============================================================
+  # Replica Instance - Deploy to Digital Ocean (100.86.64.73)
+  # ============================================================
+  advo-cache-replica:
+    image: nostro37/advo-cache:latest
+    container_name: advo-cache-replica
+    network_mode: "host"
+    environment:
+      - ADVO_PORT=:8081
+      - ADVO_ENVIRONMENT=production
+      - ADVO_ROLE=replica
+      - ADVO_CACHE_TTL_MINUTES=15
+      - ADVO_JITTER_PERCENT=20
+      - ADVO_LOCK_TTL_SECONDS=30
+      - ADVO_LOCK_CLEANUP_SECONDS=5
+      - ADVO_HEARTBEAT_INTERVAL_SECONDS=5
+      - ADVO_HEARTBEAT_TIMEOUT_SECONDS=10
+      - ADVO_LOG_LEVEL=info
+      - ADVO_LEADER_ADDRESS=ws://100.117.95.87:8081/ws
+    restart: unless-stopped

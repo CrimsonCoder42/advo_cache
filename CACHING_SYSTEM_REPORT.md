@@ -155,10 +155,10 @@ type Config struct {
     LogLevel    string  // Default: "info"
 
     // Cache
-    CacheTTLMinutes      int  // Default: 15
-    JitterPercent        int  // Default: 20
-    CacheCapacity        int  // Default: 10000 (max entries per sheet)
-    TTLCleanupSeconds    int  // Default: 60 (background cleanup interval)
+    CacheTTLMinutes      int  // Default: 15 - HOW LONG entries live (15 minutes)
+    JitterPercent        int  // Default: 20 - adds 0-20% random delay to TTL
+    CacheCapacity        int  // Default: 10000 - max entries per sheet before LRU eviction
+    TTLCleanupSeconds    int  // Default: 60 - HOW OFTEN cleaner runs (NOT expiration time!)
 
     // Lock
     LockTTLSeconds     int  // Default: 30
@@ -238,10 +238,26 @@ type Cache struct {
 3. **Cache Avalanche Prevention**: `SetWithJitter(key, value, baseTTL, jitterPercent)` adds random jitter
 
 **TTL Mechanism (Background Cleaner):**
-- `StartTTLCleaner(interval)` - Runs goroutine with ticker
-- Periodic cleanup every 60 seconds (configurable via `ADVO_TTL_CLEANUP_SECONDS`)
-- Lazy expiration on `Get()` - expired entries removed when accessed
+
+> **IMPORTANT:** `ADVO_TTL_CLEANUP_SECONDS` is NOT the expiration time!
+> - Entries live for `ADVO_CACHE_TTL_MINUTES` (default: 15 minutes)
+> - Cleanup runs every `ADVO_TTL_CLEANUP_SECONDS` (default: 60 seconds) to remove already-expired entries
+
+- `StartTTLCleaner(interval)` - Runs goroutine with ticker (auto-started on cache creation)
+- Periodic cleanup scans for entries past their `ExpiresAt` time
+- Lazy expiration on `Get()` - expired entries also removed immediately when accessed
 - No per-key goroutines (efficient for high volume)
+
+**Example Timeline:**
+```
+10:00:00 - Entry added with TTL=15min → ExpiresAt=10:15:00
+10:01:00 - Cleanup runs, entry still valid (not expired)
+10:14:00 - Cleanup runs, entry still valid (not expired)
+10:15:00 - Entry NOW expired
+10:15:30 - Cleanup runs, removes expired entry
+   OR
+10:15:10 - Someone calls Get(), lazy expiration removes it immediately
+```
 
 **LRU Eviction:**
 - When capacity reached, `Set()` calls `evictOldest()` before adding new entry

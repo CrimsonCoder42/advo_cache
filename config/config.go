@@ -16,8 +16,10 @@ type Config struct {
 	LogLevel    string `mapstructure:"ADVO_LOG_LEVEL"`
 
 	// Cache settings
-	CacheTTLMinutes int `mapstructure:"ADVO_CACHE_TTL_MINUTES"`
-	JitterPercent   int `mapstructure:"ADVO_JITTER_PERCENT"`
+	CacheTTLMinutes      int `mapstructure:"ADVO_CACHE_TTL_MINUTES"`
+	JitterPercent        int `mapstructure:"ADVO_JITTER_PERCENT"`
+	CacheCapacity        int `mapstructure:"ADVO_CACHE_CAPACITY"`
+	TTLCleanupSeconds    int `mapstructure:"ADVO_TTL_CLEANUP_SECONDS"`
 
 	// Lock settings
 	LockTTLSeconds     int `mapstructure:"ADVO_LOCK_TTL_SECONDS"`
@@ -42,6 +44,16 @@ var AppConfig Config
 // CacheTTL returns the cache TTL as time.Duration
 func (c *Config) CacheTTL() time.Duration {
 	return time.Duration(c.CacheTTLMinutes) * time.Minute
+}
+
+// GetCacheCapacity returns the max cache capacity per sheet
+func (c *Config) GetCacheCapacity() int {
+	return c.CacheCapacity
+}
+
+// TTLCleanupInterval returns the TTL cleanup interval as time.Duration
+func (c *Config) TTLCleanupInterval() time.Duration {
+	return time.Duration(c.TTLCleanupSeconds) * time.Second
 }
 
 // LockTTL returns the lock TTL as time.Duration
@@ -81,6 +93,8 @@ func LoadConfig(path string) error {
 	viper.SetDefault("ADVO_LOG_LEVEL", "info")
 	viper.SetDefault("ADVO_CACHE_TTL_MINUTES", 15)
 	viper.SetDefault("ADVO_JITTER_PERCENT", 20)
+	viper.SetDefault("ADVO_CACHE_CAPACITY", 10000)
+	viper.SetDefault("ADVO_TTL_CLEANUP_SECONDS", 60)
 	viper.SetDefault("ADVO_LOCK_TTL_SECONDS", 30)
 	viper.SetDefault("ADVO_LOCK_CLEANUP_SECONDS", 5)
 	viper.SetDefault("ADVO_HEARTBEAT_INTERVAL_SECONDS", 5)

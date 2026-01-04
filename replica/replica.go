@@ -80,6 +80,13 @@ type ReplicateUnlockMsg struct {
 	Key   string `json:"key"`   // lock key
 }
 
+// ReplicateEvictMsg sent to replicas when LRU eviction occurs
+type ReplicateEvictMsg struct {
+	Type  string `json:"type"`  // "replicate_evict"
+	Sheet string `json:"sheet"` // which sheet
+	Key   string `json:"key"`   // evicted key
+}
+
 // New creates a new Replica
 func New(conn *websocket.Conn, instanceID string, startedAt time.Time) *Replica {
 	return &Replica{

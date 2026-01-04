@@ -282,10 +282,12 @@ func (h *Handler) handleGet(client *Client, req Request) {
 }
 
 func (h *Handler) handleSet(client *Client, req Request) {
+	// Set returns evicted key if capacity was exceeded (LRU eviction)
+	var evictedKey string
 	if req.Jitter {
-		client.Sheet.SetWithJitter(req.Key, req.Value, config.AppConfig.CacheTTL(), config.AppConfig.JitterPercent)
+		evictedKey = client.Sheet.SetWithJitter(req.Key, req.Value, config.AppConfig.CacheTTL(), config.AppConfig.JitterPercent)
 	} else {
-		client.Sheet.Set(req.Key, req.Value, config.AppConfig.CacheTTL())
+		evictedKey = client.Sheet.Set(req.Key, req.Value, config.AppConfig.CacheTTL())
 	}
 	h.sendResponse(client.Conn, Response{
 		Success: true,
@@ -297,6 +299,17 @@ func (h *Handler) handleSet(client *Client, req Request) {
 
 	// Replicate to followers (backup servers)
 	h.replicateSet(client.Sheet.ID, req.Key, req.Value, req.Jitter)
+
+	// If LRU eviction occurred, notify collaborators AND replicate to followers
+	if evictedKey != "" {
+		// 1. Broadcast to collaborators (Readers) so they remove from local cache
+		client.Sheet.Broadcast(client.Conn, sheet.Broadcast{
+			Type: "invalidate",
+			Key:  evictedKey,
+		})
+		// 2. Replicate to backup servers
+		h.replicateEvict(client.Sheet.ID, evictedKey)
+	}
 }
 
 func (h *Handler) handleDelete(client *Client, req Request) {
@@ -430,7 +443,8 @@ func (h *Handler) handleUnlock(client *Client, req Request) {
 // =============================================================================
 
 func (h *Handler) handleSetNull(client *Client, req Request) {
-	client.Sheet.SetNull(req.Key, config.AppConfig.CacheTTL())
+	// SetNull returns evicted key if capacity was exceeded (LRU eviction)
+	evictedKey := client.Sheet.SetNull(req.Key, config.AppConfig.CacheTTL())
 	h.sendResponse(client.Conn, Response{
 		Success: true,
 		Key:     req.Key,
@@ -438,6 +452,17 @@ func (h *Handler) handleSetNull(client *Client, req Request) {
 
 	// Replicate to followers (set_null is just a special set)
 	h.replicateSet(client.Sheet.ID, req.Key, "__NULL__", false)
+
+	// If LRU eviction occurred, notify collaborators AND replicate to followers
+	if evictedKey != "" {
+		// 1. Broadcast to collaborators (Readers) so they remove from local cache
+		client.Sheet.Broadcast(client.Conn, sheet.Broadcast{
+			Type: "invalidate",
+			Key:  evictedKey,
+		})
+		// 2. Replicate to backup servers
+		h.replicateEvict(client.Sheet.ID, evictedKey)
+	}
 }
 
 // =============================================================================
@@ -558,6 +583,17 @@ func (h *Handler) replicateUnlock(sheetID, key string) {
 		Key:   key,
 	}
 	h.broadcastToReplicas(msg)
+}
+
+// replicateEvict sends an LRU eviction to all replicas
+func (h *Handler) replicateEvict(sheetID, key string) {
+	msg := replica.ReplicateEvictMsg{
+		Type:  "replicate_evict",
+		Sheet: sheetID,
+		Key:   key,
+	}
+	h.broadcastToReplicas(msg)
+	logger.Info("LRU eviction replicated: " + sheetID + "/" + key)
 }
 
 // broadcastToReplicas sends a message to all connected replicas

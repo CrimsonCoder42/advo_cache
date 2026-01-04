@@ -25,13 +25,14 @@ A WebSocket-based distributed cache service with multi-tenant isolation. Think o
 
 ## Features
 
-- **O(1) Operations** - sync.Map for thread-safe, lock-free lookups
+- **O(1) Operations** - Server uses LRU cache (doubly linked list + hash map), Reader uses sync.Map for local reads
+- **LRU Eviction** - Server cache has capacity limits (default 10K entries per sheet), hot data stays cached longer
 - **Multi-Tenant Isolation** - Password-protected sheets with complete data separation
 - **Distributed Locking** - Ownership tracking + TTL auto-expiration
 - **Cache Pitfall Prevention** - Built-in stampede, penetration, and avalanche protection
-- **Real-Time Broadcasts** - Instant SET and DELETE propagation to all collaborators
+- **Real-Time Broadcasts** - Instant SET, DELETE, and LRU eviction propagation to all collaborators
 - **Leader/Follower Replication** - Hot standby for high availability
-- **Embeddable Reader Package** - Import directly into Go applications for O(1) local reads
+- **Embeddable Reader Package** - Import directly into Go applications for O(1) local reads via sync.Map
 - **Configurable** - Viper-based .env configuration with environment overrides
 
 ---
@@ -652,6 +653,17 @@ When any client calls SET, all other collaborators receive:
 {"type": "invalidate", "suffix": ":metadata"}
 ```
 
+### LRU Eviction Broadcasts
+
+When the server cache reaches capacity (default 10,000 entries per sheet), the least recently used entry is evicted. All collaborators receive an invalidation:
+
+```json
+// LRU eviction (capacity exceeded, oldest entry removed)
+{"type": "invalidate", "key": "evicted-key"}
+```
+
+This ensures Reader clients remove stale keys from their local sync.Map cache.
+
 **Note:** Sender does not receive their own broadcast.
 
 ### Use Case
@@ -711,8 +723,10 @@ All configuration is via environment variables or `.env` file.
 | `ADVO_PORT` | `:8081` | WebSocket server port |
 | `ADVO_ENVIRONMENT` | `development` | Environment (development/staging/production) |
 | `ADVO_ROLE` | `leader` | Explicit role: `leader` or `replica` |
-| `ADVO_CACHE_TTL_MINUTES` | `15` | Default cache entry TTL |
-| `ADVO_JITTER_PERCENT` | `20` | TTL jitter for avalanche prevention |
+| `ADVO_CACHE_TTL_MINUTES` | `15` | **Entry lifespan** - how long entries live before expiring |
+| `ADVO_JITTER_PERCENT` | `20` | TTL jitter for avalanche prevention (adds 0-20% random delay) |
+| `ADVO_CACHE_CAPACITY` | `10000` | Max entries per sheet before LRU eviction |
+| `ADVO_TTL_CLEANUP_SECONDS` | `60` | **Cleanup frequency** - how often background cleaner checks for expired entries (NOT the expiration time) |
 | `ADVO_LOCK_TTL_SECONDS` | `30` | Distributed lock auto-expiration |
 | `ADVO_LOCK_CLEANUP_SECONDS` | `5` | Lock cleanup interval |
 | `ADVO_HEARTBEAT_INTERVAL_SECONDS` | `5` | Leader heartbeat frequency |
@@ -720,12 +734,24 @@ All configuration is via environment variables or `.env` file.
 | `ADVO_LEADER_ADDRESS` | (empty) | Set to leader URL for replica mode |
 | `ADVO_LOG_LEVEL` | `info` | Logging verbosity |
 
+### Important: TTL vs Cleanup Interval
+
+**These are NOT the same thing:**
+
+| Setting | What It Controls | Example |
+|---------|------------------|---------|
+| `ADVO_CACHE_TTL_MINUTES=15` | Entry lifespan | Entry added at 10:00 expires at 10:15 |
+| `ADVO_TTL_CLEANUP_SECONDS=60` | How often we check | Cleaner runs every 60s to remove expired entries |
+
+The cleanup interval (60s) is just the frequency of the background garbage collector. Entries still live for the full TTL (15 minutes by default). Expired entries are also removed immediately on access (lazy expiration).
+
 ### Example .env
 
 ```env
 ADVO_PORT=:8081
 ADVO_ENVIRONMENT=production
 ADVO_CACHE_TTL_MINUTES=30
+ADVO_CACHE_CAPACITY=50000
 ADVO_LOCK_TTL_SECONDS=60
 ```
 
@@ -822,7 +848,7 @@ advo_cache/
 ├── README.md               # This file
 │
 ├── cache/
-│   └── cache.go            # In-memory cache (sync.Map, TTL, jitter)
+│   └── cache.go            # LRU cache (doubly linked list + hash map, capacity limits, TTL, jitter)
 │
 ├── config/
 │   └── config.go           # Viper configuration loader
@@ -853,7 +879,7 @@ advo_cache/
 | Component | Purpose |
 |-----------|---------|
 | `main.go` | Server startup, routes, lock cleanup goroutine |
-| `cache/cache.go` | O(1) key-value storage with TTL, jitter, null placeholders |
+| `cache/cache.go` | LRU cache with O(1) operations, capacity limits, TTL cleanup, jitter, null placeholders |
 | `config/config.go` | Load .env via Viper, provide AppConfig struct |
 | `lock/lock.go` | Distributed locks with ownership, TTL, disconnect cleanup |
 | `logger/logger.go` | ANSI-colored terminal output (INFO/WARN/ERROR) |
@@ -890,7 +916,7 @@ advo_cache/
 |------|------|---------|
 | `sheet_state` | On open | Full current state |
 | `replicate` | On any SET | Sync new/updated value |
-| `invalidate` | On any DELETE | Clear local cache |
+| `invalidate` | On DELETE or LRU eviction | Clear key from local cache |
 
 ### Leader → Replica (Replication)
 
@@ -904,6 +930,7 @@ advo_cache/
 | `replicate_delete_suffix` | Suffix deleted |
 | `replicate_lock` | Lock acquired |
 | `replicate_unlock` | Lock released |
+| `replicate_evict` | LRU eviction (capacity exceeded) |
 
 ---
 

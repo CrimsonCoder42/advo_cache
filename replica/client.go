@@ -169,6 +169,14 @@ func (c *Client) handleMessage(data []byte) {
 		// Unlock replication - log but don't apply
 		logger.Info("Unlock replication received (ignored)")
 
+	case "replicate_evict":
+		var msg ReplicateEvictMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			logger.Error("Failed to parse replicate_evict: " + err.Error())
+			return
+		}
+		c.applyEvict(msg)
+
 	default:
 		logger.Warning("Unknown message type from leader: " + base.Type)
 	}
@@ -231,6 +239,15 @@ func (c *Client) applyDeleteSuffix(msg ReplicateDeleteSuffixMsg) {
 	s := c.manager.GetSheet(msg.Sheet)
 	if s != nil {
 		s.DeleteSuffix(msg.Suffix)
+	}
+}
+
+// applyEvict applies an LRU eviction from leader
+func (c *Client) applyEvict(msg ReplicateEvictMsg) {
+	s := c.manager.GetSheet(msg.Sheet)
+	if s != nil {
+		s.Delete(msg.Key)
+		logger.Info("Applied LRU eviction from leader: " + msg.Sheet + "/" + msg.Key)
 	}
 }
 
